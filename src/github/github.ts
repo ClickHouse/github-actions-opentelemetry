@@ -28,34 +28,41 @@ export const fetchWorkflowResults = async (
   delayMs = 1000,
   maxTry = 10
 ): Promise<WorkflowResults> => {
-  try {
-    // A workflow sometime has not completed in spite of trigger of workflow completed event.
-    // FYI: https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#workflow_run
-    const results = await (
-      async () => {
-        const workflowRes = await fetchWorkflow(octokit, workflowContext)
-        const workflowJobsRes = await fetchWorkflowJobs(
-          octokit,
-          workflowContext
-        )
-        const workflowJobs = workflowJobsRes
-          .map(job => toWorkflowJob(job, workflowRes.event))
-          .filter((job): job is WorkflowJob => job !== null)
-        if (workflowJobs.length === 0) {
-          throw new Error(`no completed jobs found for workflow run.`)
-        }
-        return {
-          workflow: toWorkflow(workflowRes),
-          workflowJobs
-        }
+  // A workflow sometimes has not completed in spite of trigger of workflow completed event.
+  // Retry with backoff to handle GitHub API propagation delays.
+  // FYI: https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#workflow_run
+  let currentDelay = delayMs
+  for (let attempt = 1; attempt <= maxTry; attempt++) {
+    try {
+      const workflowRes = await fetchWorkflow(octokit, workflowContext)
+      const workflowJobsRes = await fetchWorkflowJobs(
+        octokit,
+        workflowContext
+      )
+      const workflowJobs = workflowJobsRes
+        .map(job => toWorkflowJob(job, workflowRes.event))
+        .filter((job): job is WorkflowJob => job !== null)
+      if (workflowJobs.length === 0) {
+        throw new Error(`no completed jobs found for workflow run.`)
       }
-    )()
-    return results
-  } catch (err) {
-    core.error('failed to get results of workflow run')
-    console.error(err)
-    throw err
+      return {
+        workflow: toWorkflow(workflowRes),
+        workflowJobs
+      }
+    } catch (err) {
+      if (attempt === maxTry) {
+        core.error('failed to get results of workflow run')
+        console.error(err)
+        throw err
+      }
+      console.log(
+        `Attempt ${attempt}/${maxTry} failed, retrying in ${currentDelay}ms...`
+      )
+      await new Promise(resolve => setTimeout(resolve, currentDelay))
+      currentDelay *= 2
+    }
   }
+  throw new Error('unreachable')
 }
 
 const fetchWorkflow = async (
