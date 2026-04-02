@@ -18,7 +18,7 @@
     ".": "./dist/index.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "package": "npx ncc build src/index.ts -o dist --source-map --license licenses.txt"
